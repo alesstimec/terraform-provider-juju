@@ -6,6 +6,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/dustin/go-humanize"
@@ -232,6 +233,7 @@ func (r *applicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplaceIfConfigured(),
 					stringplanmodifier.UseStateForUnknown(),
+					SortCommaSeparatedValues(),
 				},
 			},
 			"principal": schema.BoolAttribute{
@@ -1334,4 +1336,39 @@ func applicationResourceModelForLogging(_ context.Context, app *applicationResou
 		"storage":          app.Storage.String(),
 	}
 	return value
+}
+
+func SortCommaSeparatedValues() planmodifier.String {
+	return sortCommaSeparatedValues{}
+}
+
+// sortCommaSeparatedValues implements the plan modifier.
+type sortCommaSeparatedValues struct{}
+
+// Description returns a human-readable description of the plan modifier.
+func (m sortCommaSeparatedValues) Description(_ context.Context) string {
+	return "If set, this modifier will sort comman separated values in a string"
+}
+
+// MarkdownDescription returns a markdown description of the plan modifier.
+func (m sortCommaSeparatedValues) MarkdownDescription(_ context.Context) string {
+	return "If set, this modifier will sort comman separated values in a string"
+}
+
+// PlanModifyString implements the plan modification logic.
+func (m sortCommaSeparatedValues) PlanModifyString(ctx context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	// Do nothing if the plan value is unknown.
+	if req.PlanValue.IsUnknown() {
+		return
+	}
+
+	// Do nothing if there is an unknown configuration value, otherwise interpolation gets messed up.
+	if req.ConfigValue.IsUnknown() {
+		return
+	}
+
+	tokens := strings.Split(req.PlanValue.ValueString(), ",")
+	sort.Strings(tokens)
+
+	resp.PlanValue = types.StringValue(strings.Join(tokens, ","))
 }

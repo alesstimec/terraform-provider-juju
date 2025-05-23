@@ -163,6 +163,7 @@ func (r *applicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 						path.MatchRoot(PlacementKey),
 						path.MatchRoot(UnitsKey),
 					}...),
+					caasModelValidator{client: r.client},
 				},
 			},
 			"model": schema.StringAttribute{

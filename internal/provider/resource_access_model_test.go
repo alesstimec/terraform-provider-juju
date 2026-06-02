@@ -178,3 +178,175 @@ resource "juju_access_model" "test" {
 			"Access":       access,
 		})
 }
+
+// testAccResourceAccessModelV1 returns a config using the legacy `model`
+// (model name) attribute, as used by provider versions that predate the
+// model_uuid migration. It is used by the upgrade tests to provision state
+// with an older provider before upgrading to the current one.
+func testAccResourceAccessModelV1(userName, userPassword, modelName, access string) string {
+	return internaltesting.GetStringFromTemplateWithData("testAccResourceAccessModelV1",
+		`resource "juju_user" "test-user" {
+  name = "{{.UserName}}"
+  password = "{{.UserPassword}}"
+}
+
+resource "juju_model" "{{.ModelName}}" {
+  name = "{{.ModelName}}"
+}
+
+resource "juju_access_model" "test" {
+  access = "{{.Access}}"
+  model = juju_model.{{.ModelName}}.name
+  users = [juju_user.test-user.name]
+}`, internaltesting.TemplateData{
+			"UserName":     userName,
+			"UserPassword": userPassword,
+			"ModelName":    modelName,
+			"Access":       access,
+		})
+}
+
+func TestAcc_ResourceAccessModel_UpgradeV0ToV2(t *testing.T) {
+	SkipJAAS(t)
+
+	user1 := acctest.RandomWithPrefix("tfuser1")
+	password1 := acctest.RandomWithPrefix("tf-test-user1")
+	user2 := acctest.RandomWithPrefix("tfuser2")
+	password2 := acctest.RandomWithPrefix("tf-test-user2")
+	modelName := acctest.RandomWithPrefix("tf-access-model")
+
+	resourceName := "juju_access_model.test"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck: func() { testAccPreCheck(t) },
+		Steps: []resource.TestStep{
+			{
+				ExternalProviders: map[string]resource.ExternalProvider{
+					"juju": {
+						VersionConstraint: "0.21.1",
+						Source:            "juju/juju",
+					},
+				},
+				Config: testAccResourceAccessModelTwoUsersV0(user1, password1, user2, password2, modelName, "write"),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "model", modelName),
+					resource.TestCheckResourceAttr(resourceName, "access", "write"),
+					resource.TestCheckTypeSetElemAttr(resourceName, "users.*", user1),
+					resource.TestCheckTypeSetElemAttr(resourceName, "users.*", user2),
+				),
+			},
+			{
+				ProtoV6ProviderFactories: frameworkProviderFactories,
+				Config:                   testAccResourceAccessModelTwoUsers(user1, password1, user2, password2, modelName, "write"),
+			},
+		},
+	})
+}
+
+// testAccResourceAccessModelTwoUsers returns a config granting access to two
+// users using the current model_uuid attribute.
+func testAccResourceAccessModelTwoUsers(user1, password1, user2, password2, modelName, access string) string {
+	return internaltesting.GetStringFromTemplateWithData(
+		"testAccResourceAccessModelTwoUsers",
+		`
+resource "juju_user" "test-user1" {
+  name = "{{.User1}}"
+  password = "{{.Password1}}"
+}
+
+resource "juju_user" "test-user2" {
+  name = "{{.User2}}"
+  password = "{{.Password2}}"
+}
+
+resource "juju_model" "test-model" {
+  name = "{{.ModelName}}"
+}
+
+resource "juju_access_model" "test" {
+  access = "{{.Access}}"
+  model_uuid = juju_model.test-model.uuid
+
+  users = [juju_user.test-user1.name, juju_user.test-user2.name]
+}`, internaltesting.TemplateData{
+			"ModelName": modelName,
+			"User1":     user1,
+			"Password1": password1,
+			"User2":     user2,
+			"Password2": password2,
+			"Access":    access,
+		})
+}
+
+// testAccResourceAccessModelTwoUsersV0 returns a config granting access to two
+// users using the legacy `model` (model name) attribute, used to provision
+// state with an older provider before upgrading.
+func testAccResourceAccessModelTwoUsersV0(user1, password1, user2, password2, modelName, access string) string {
+	return internaltesting.GetStringFromTemplateWithData(
+		"testAccResourceAccessModelTwoUsersV0",
+		`
+resource "juju_user" "test-user1" {
+  name = "{{.User1}}"
+  password = "{{.Password1}}"
+}
+
+resource "juju_user" "test-user2" {
+  name = "{{.User2}}"
+  password = "{{.Password2}}"
+}
+
+resource "juju_model" "test-model" {
+  name = "{{.ModelName}}"
+}
+
+resource "juju_access_model" "test" {
+  access = "{{.Access}}"
+  model = juju_model.test-model.name
+
+  users = [juju_user.test-user1.name, juju_user.test-user2.name]
+}`, internaltesting.TemplateData{
+			"ModelName": modelName,
+			"User1":     user1,
+			"Password1": password1,
+			"User2":     user2,
+			"Password2": password2,
+			"Access":    access,
+		})
+}
+
+func TestAcc_ResourceAccessModel_UpgradeV1ToV2(t *testing.T) {
+	SkipJAAS(t)
+
+	userName := acctest.RandomWithPrefix("tfuser")
+	userPassword := acctest.RandomWithPrefix("tf-test-user")
+	modelName := acctest.RandomWithPrefix("tf-access-model")
+	access := "write"
+
+	resourceName := "juju_access_model.test"
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck: func() { testAccPreCheck(t) },
+		Steps: []resource.TestStep{
+			{
+				ExternalProviders: map[string]resource.ExternalProvider{
+					"juju": {
+						VersionConstraint: TestProviderPreV1Version,
+						Source:            "juju/juju",
+					},
+				},
+				Config: testAccResourceAccessModelV1(userName, userPassword, modelName, access),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "access", access),
+					resource.TestCheckResourceAttr(resourceName, "model", modelName),
+					resource.TestCheckTypeSetElemAttr(resourceName, "users.*", userName),
+				),
+			},
+			{
+				ProtoV6ProviderFactories: frameworkProviderFactories,
+				Config:                   testAccResourceAccessModel(userName, userPassword, modelName, access),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttrPair(resourceName, "model_uuid", "juju_model."+modelName, "uuid"),
+				),
+			},
+		},
+	})
+}

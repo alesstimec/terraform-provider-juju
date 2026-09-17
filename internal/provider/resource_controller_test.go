@@ -33,7 +33,6 @@ import (
 	controllerapi "github.com/juju/juju/api/controller/controller"
 	"github.com/juju/names/v6"
 	"github.com/juju/terraform-provider-juju/internal/juju"
-	internaltesting "github.com/juju/terraform-provider-juju/internal/testing"
 	"github.com/juju/terraform-provider-juju/internal/wait"
 	"github.com/juju/version/v2"
 )
@@ -386,11 +385,8 @@ func TestAcc_ResourceControllerWithJujuBinary(t *testing.T) {
 		initialAgentVersion = "3.6.21"
 		updatedAgentVersion = "3.6.23"
 	case 4:
-		t.Skip("Skip until 4.0.13 is released." +
-			"Early 4.0.x releases moved the ModelUpgrader facade before " +
-			"a revert in https://github.com/juju/juju/pull/22488 released in 4.0.12.")
 		initialAgentVersion = "4.0.12"
-		updatedAgentVersion = "4.0.13"
+		updatedAgentVersion = "4.0.14"
 	default:
 		t.Errorf("unsupported Juju agent version %q for this test", agentVersion)
 	}
@@ -564,8 +560,6 @@ func TestAcc_ResourceControllerWithJujuBinary(t *testing.T) {
 					agentVersion := os.Getenv(TestJujuAgentVersion)
 					if agentVersion == "" {
 						t.Fatal("Juju agent version not set")
-					} else if internaltesting.CompareVersions(agentVersion, "4.0.0") >= 0 {
-						return true, nil
 					}
 					return false, nil
 				},
@@ -621,6 +615,12 @@ func TestAcc_ResourceControllerWithJujuBinary(t *testing.T) {
 				// Verify that invalid controller config fails
 				Config:      testAccResourceControllerWithJujuBinary(controllerName, updatedAgentVersion, baseBootstrapConfig, invalidControllerConfig, unsetControllerModelConfig),
 				ExpectError: regexp.MustCompile("failed to update controller config: unknown controller config"),
+			},
+			{
+				// Verify that scaling down via the enable-HA action fails:
+				// Juju 4 rejects it client-side, Juju 3 rejects it in the facade.
+				Config:      testAccResourceControllerWithEnableHADown(controllerName, updatedAgentVersion, baseBootstrapConfig, unsetControllerConfig, unsetControllerModelConfig),
+				ExpectError: regexp.MustCompile(`(?i)(not supported|cannot remove controllers)`),
 			},
 		}, testJAASControllerResourceSteps(t, resourceName, controllerName, updatedAgentVersion, baseBootstrapConfig)...),
 		CheckDestroy: func(s *terraform.State) error {
@@ -981,6 +981,33 @@ action "juju_enable_ha" "ctrl_ha" {
   	username      = juju_controller.controller.username
   	password      = juju_controller.controller.password
   	units         = 3
+  }
+}
+`
+}
+
+// testAccResourceControllerWithEnableHADown returns HCL that bootstraps a
+// controller and runs the juju_enable_ha action with fewer units than the
+// controller currently has, which must fail.
+func testAccResourceControllerWithEnableHADown(controllerName, agentVersion string, bootstrapConfig, controllerConfig, modelConfig map[string]string) string {
+	base := testAccResourceControllerWithJujuBinary(controllerName, agentVersion, bootstrapConfig, controllerConfig, modelConfig)
+	return base + `
+resource "terraform_data" "test" {
+  lifecycle {
+    action_trigger {
+      events  = [after_create]
+      actions = [action.juju_enable_ha.ctrl_ha]
+    }
+  }
+}
+
+action "juju_enable_ha" "ctrl_ha" {
+  config {
+  	api_addresses = juju_controller.controller.api_addresses
+  	ca_cert       = juju_controller.controller.ca_cert
+  	username      = juju_controller.controller.username
+  	password      = juju_controller.controller.password
+  	units         = 1
   }
 }
 `

@@ -93,7 +93,11 @@ func (a *enableHAAction) Schema(_ context.Context, _ action.SchemaRequest, resp 
 			},
 			"constraints": actionschema.StringAttribute{
 				Description: "Optional placement constraints for newly provisioned " +
-					"controller units (e.g. \"mem=8G cores=4\").",
+					"controller units (e.g. \"mem=8G cores=4\"). Only used on " +
+					"Juju < 4.0 controllers; on Juju >= 4.0 new controller " +
+					"units inherit the constraints set at bootstrap time " +
+					"(bootstrap_constraints), mirroring the Juju CLI's " +
+					"\"juju add-unit\" which accepts no constraints.",
 				Optional: true,
 			},
 			"to": actionschema.ListAttribute{

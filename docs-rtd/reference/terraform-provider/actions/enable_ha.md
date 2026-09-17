@@ -40,5 +40,5 @@ action "juju_enable_ha" "this" {
 
 ### Optional
 
-- `constraints` (String) Optional placement constraints for newly provisioned controller units (e.g. "mem=8G cores=4").
+- `constraints` (String) Optional placement constraints for newly provisioned controller units (e.g. "mem=8G cores=4"). Only used on Juju < 4.0 controllers; on Juju >= 4.0 new controller units inherit the constraints set at bootstrap time (bootstrap_constraints), mirroring the Juju CLI's "juju add-unit" which accepts no constraints.
 - `to` (List of String) Optional list of placement directives for new controller units (e.g. ["lxd:0", "lxd:1"]).

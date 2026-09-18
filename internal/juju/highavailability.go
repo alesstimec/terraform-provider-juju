@@ -11,10 +11,11 @@ import (
 	"github.com/juju/juju/api/client/application"
 	"github.com/juju/juju/api/client/client"
 	"github.com/juju/juju/api/client/highavailability"
+	"github.com/juju/juju/api/client/modelconfig"
 	"github.com/juju/juju/api/connector"
-	controllerapi "github.com/juju/juju/api/controller/controller"
 	"github.com/juju/juju/core/constraints"
 	"github.com/juju/juju/core/instance"
+	"github.com/juju/juju/environs/config"
 )
 
 // EnableHAInput contains the input for enabling high availability on a controller.
@@ -108,6 +109,11 @@ func (c *EnableHAClient) enableHAByScaling(ctx context.Context, conn api.Connect
 	case diff == 0:
 		return nil
 	case diff < 0:
+		// Juju 4 could technically scale down here (the API allows
+		// removing units), but we keep the Juju 3 behaviour of rejecting
+		// scale-down for consistency across versions. Removing controller
+		// units is an operator-guided action; use the Juju CLI
+		// ("juju remove-unit") instead.
 		return fmt.Errorf("removing %d controller unit(s) is not supported: use the Juju CLI (\"juju remove-unit\") instead", -diff)
 	}
 
@@ -131,7 +137,9 @@ func (c *EnableHAClient) enableHAByScaling(ctx context.Context, conn api.Connect
 }
 
 // controllerModelUUID returns the UUID of the "controller" model on the
-// controller described by connInfo.
+// controller described by connInfo. A controller-only connection returns
+// the controller model's own configuration, so its UUID can be read
+// directly from the model config, the same way the bootstrap code does.
 func (c *EnableHAClient) controllerModelUUID(ctx context.Context, connInfo ControllerConnectionInformation) (string, error) {
 	conn, err := c.connect(ctx, connInfo, "")
 	if err != nil {
@@ -139,16 +147,18 @@ func (c *EnableHAClient) controllerModelUUID(ctx context.Context, connInfo Contr
 	}
 	defer conn.Close()
 
-	models, err := controllerapi.NewClient(conn).AllModels(ctx)
+	modelAttrs, err := modelconfig.NewClient(conn).ModelGet(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to list models: %w", err)
+		return "", fmt.Errorf("failed to get model config: %w", err)
 	}
-	for _, m := range models {
-		if m.Name == "controller" {
-			return m.UUID, nil
-		}
+	cfg, err := config.New(config.NoDefaults, modelAttrs)
+	if err != nil {
+		return "", fmt.Errorf("failed to build model config: %w", err)
 	}
-	return "", fmt.Errorf("controller model not found")
+	if cfg.UUID() == "" {
+		return "", fmt.Errorf("controller model UUID not found in model config")
+	}
+	return cfg.UUID(), nil
 }
 
 // connect returns a connection to the controller described by connInfo,

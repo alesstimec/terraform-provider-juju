@@ -619,7 +619,7 @@ func TestAcc_ResourceControllerWithJujuBinary(t *testing.T) {
 			{
 				// Verify that scaling down via the enable-HA action fails:
 				// Juju 4 rejects it client-side, Juju 3 rejects it in the facade.
-				Config:      testAccResourceControllerWithEnableHADown(controllerName, updatedAgentVersion, baseBootstrapConfig, unsetControllerConfig, unsetControllerModelConfig),
+				Config:      testAccResourceControllerScaleDownHAErrors(controllerName, updatedAgentVersion, baseBootstrapConfig, unsetControllerConfig, unsetControllerModelConfig),
 				ExpectError: regexp.MustCompile(`(?i)(not supported|cannot remove controllers)`),
 			},
 		}, testJAASControllerResourceSteps(t, resourceName, controllerName, updatedAgentVersion, baseBootstrapConfig)...),
@@ -986,10 +986,10 @@ action "juju_enable_ha" "ctrl_ha" {
 `
 }
 
-// testAccResourceControllerWithEnableHADown returns HCL that bootstraps a
+// testAccResourceControllerScaleDownHAErrors returns HCL that bootstraps a
 // controller and runs the juju_enable_ha action with fewer units than the
 // controller currently has, which must fail.
-func testAccResourceControllerWithEnableHADown(controllerName, agentVersion string, bootstrapConfig, controllerConfig, modelConfig map[string]string) string {
+func testAccResourceControllerScaleDownHAErrors(controllerName, agentVersion string, bootstrapConfig, controllerConfig, modelConfig map[string]string) string {
 	base := testAccResourceControllerWithJujuBinary(controllerName, agentVersion, bootstrapConfig, controllerConfig, modelConfig)
 	return base + `
 resource "terraform_data" "test" {

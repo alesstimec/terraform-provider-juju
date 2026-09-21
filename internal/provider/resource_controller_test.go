@@ -370,6 +370,13 @@ func TestBuildStringListFromMap(t *testing.T) {
 // Check `project-docs/BOOTSTRAP_TESTS.md` for more details
 // on how to set up the environment.
 
+// skipUnlessLXD skips a test step on non-LXD clouds. It is used by the
+// enable-HA steps, which require LXD to provision additional controller
+// units.
+func skipUnlessLXD() (bool, error) {
+	return testingCloud != LXDCloudTesting, nil
+}
+
 func TestAcc_ResourceControllerWithJujuBinary(t *testing.T) {
 	controllerName := acctest.RandomWithPrefix("tf-test-controller")
 	resourceName := "juju_controller.controller"
@@ -553,17 +560,8 @@ func TestAcc_ResourceControllerWithJujuBinary(t *testing.T) {
 				),
 			},
 			{
-				SkipFunc: func() (bool, error) {
-					if testingCloud != LXDCloudTesting {
-						return true, nil
-					}
-					agentVersion := os.Getenv(TestJujuAgentVersion)
-					if agentVersion == "" {
-						t.Fatal("Juju agent version not set")
-					}
-					return false, nil
-				},
-				Config: testAccResourceControllerWithEnableHA(controllerName, updatedAgentVersion, baseBootstrapConfig, unsetControllerConfig, unsetControllerModelConfig),
+				SkipFunc: skipUnlessLXD,
+				Config:   testAccResourceControllerWithEnableHA(controllerName, updatedAgentVersion, baseBootstrapConfig, unsetControllerConfig, unsetControllerModelConfig),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "name", controllerName),
 					func(s *terraform.State) error {
@@ -619,6 +617,10 @@ func TestAcc_ResourceControllerWithJujuBinary(t *testing.T) {
 			{
 				// Verify that scaling down via the enable-HA action fails:
 				// Juju 4 rejects it client-side, Juju 3 rejects it in the facade.
+				// This step depends on the previous step having scaled the
+				// controller up to 3 units, so it is skipped on non-LXD clouds
+				// for the same reason.
+				SkipFunc:    skipUnlessLXD,
 				Config:      testAccResourceControllerScaleDownHAErrors(controllerName, updatedAgentVersion, baseBootstrapConfig, unsetControllerConfig, unsetControllerModelConfig),
 				ExpectError: regexp.MustCompile(`(?i)(not supported|cannot remove controllers)`),
 			},

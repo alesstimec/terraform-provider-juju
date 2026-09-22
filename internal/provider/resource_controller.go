@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -25,8 +26,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
+	"github.com/juju/juju/rpc/params"
 	"github.com/juju/names/v5"
 	"github.com/juju/terraform-provider-juju/internal/juju"
+	"github.com/juju/terraform-provider-juju/internal/wait"
 	"github.com/juju/version/v2"
 )
 
@@ -934,7 +937,30 @@ func (r *controllerResource) Read(ctx context.Context, req resource.ReadRequest,
 		)
 		return
 	}
-	controllerConfig, controllerModelConfig, err := command.Config(ctx, connInfo)
+
+	// While a controller upgrade is in progress, Juju 4 rejects some API
+	// calls with an "upgrade in progress" error. Retry until the upgrade
+	// finishes, mirroring how the Juju CLI waits for the API to become
+	// available again.
+	var controllerConfig, controllerModelConfig map[string]any
+	_, err = wait.WaitFor(wait.WaitForCfg[struct{}, struct{}]{
+		Context: ctx,
+		GetData: func(ctx context.Context, _ struct{}) (struct{}, error) {
+			var err error
+			controllerConfig, controllerModelConfig, err = command.Config(ctx, connInfo)
+			if err != nil && params.IsCodeUpgradeInProgress(err) {
+				return struct{}{}, juju.NewRetryReadError("controller is upgrading")
+			}
+			return struct{}{}, err
+		},
+		Input:          struct{}{},
+		NonFatalErrors: []error{juju.RetryReadError},
+		RetryConf: &wait.RetryConf{
+			MaxDuration: 10 * time.Minute,
+			Delay:       10 * time.Second,
+			MaxDelay:    30 * time.Second,
+		},
+	})
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Controller Read Error",

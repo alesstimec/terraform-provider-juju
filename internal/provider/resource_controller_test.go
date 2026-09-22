@@ -33,7 +33,6 @@ import (
 	controllerapi "github.com/juju/juju/api/controller/controller"
 	"github.com/juju/names/v6"
 	"github.com/juju/terraform-provider-juju/internal/juju"
-	internaltesting "github.com/juju/terraform-provider-juju/internal/testing"
 	"github.com/juju/terraform-provider-juju/internal/wait"
 	"github.com/juju/version/v2"
 )
@@ -371,6 +370,13 @@ func TestBuildStringListFromMap(t *testing.T) {
 // Check `project-docs/BOOTSTRAP_TESTS.md` for more details
 // on how to set up the environment.
 
+// skipUnlessLXD skips a test step on non-LXD clouds. It is used by the
+// enable-HA steps, which require LXD to provision additional controller
+// units.
+func skipUnlessLXD() (bool, error) {
+	return testingCloud != LXDCloudTesting, nil
+}
+
 func TestAcc_ResourceControllerWithJujuBinary(t *testing.T) {
 	controllerName := acctest.RandomWithPrefix("tf-test-controller")
 	resourceName := "juju_controller.controller"
@@ -554,19 +560,8 @@ func TestAcc_ResourceControllerWithJujuBinary(t *testing.T) {
 				),
 			},
 			{
-				SkipFunc: func() (bool, error) {
-					if testingCloud != LXDCloudTesting {
-						return true, nil
-					}
-					agentVersion := os.Getenv(TestJujuAgentVersion)
-					if agentVersion == "" {
-						t.Fatal("Juju agent version not set")
-					} else if internaltesting.CompareVersions(agentVersion, "4.0.0") >= 0 {
-						return true, nil
-					}
-					return false, nil
-				},
-				Config: testAccResourceControllerWithEnableHA(controllerName, updatedAgentVersion, baseBootstrapConfig, unsetControllerConfig, unsetControllerModelConfig),
+				SkipFunc: skipUnlessLXD,
+				Config:   testAccResourceControllerWithEnableHA(controllerName, updatedAgentVersion, baseBootstrapConfig, unsetControllerConfig, unsetControllerModelConfig),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "name", controllerName),
 					func(s *terraform.State) error {
@@ -618,6 +613,16 @@ func TestAcc_ResourceControllerWithJujuBinary(t *testing.T) {
 				// Verify that invalid controller config fails
 				Config:      testAccResourceControllerWithJujuBinary(controllerName, updatedAgentVersion, baseBootstrapConfig, invalidControllerConfig, unsetControllerModelConfig),
 				ExpectError: regexp.MustCompile("failed to update controller config: unknown controller config"),
+			},
+			{
+				// Verify that scaling down via the enable-HA action fails:
+				// Juju 4 rejects it client-side, Juju 3 rejects it in the facade.
+				// This step depends on the previous step having scaled the
+				// controller up to 3 units, so it is skipped on non-LXD clouds
+				// for the same reason.
+				SkipFunc:    skipUnlessLXD,
+				Config:      testAccResourceControllerScaleDownHAErrors(controllerName, updatedAgentVersion, baseBootstrapConfig, unsetControllerConfig, unsetControllerModelConfig),
+				ExpectError: regexp.MustCompile(`(?i)(not supported|cannot remove controllers)`),
 			},
 		}, testJAASControllerResourceSteps(t, resourceName, controllerName, updatedAgentVersion, baseBootstrapConfig)...),
 		CheckDestroy: func(s *terraform.State) error {
@@ -978,6 +983,33 @@ action "juju_enable_ha" "ctrl_ha" {
   	username      = juju_controller.controller.username
   	password      = juju_controller.controller.password
   	units         = 3
+  }
+}
+`
+}
+
+// testAccResourceControllerScaleDownHAErrors returns HCL that bootstraps a
+// controller and runs the juju_enable_ha action with fewer units than the
+// controller currently has, which must fail.
+func testAccResourceControllerScaleDownHAErrors(controllerName, agentVersion string, bootstrapConfig, controllerConfig, modelConfig map[string]string) string {
+	base := testAccResourceControllerWithJujuBinary(controllerName, agentVersion, bootstrapConfig, controllerConfig, modelConfig)
+	return base + `
+resource "terraform_data" "test" {
+  lifecycle {
+    action_trigger {
+      events  = [after_create]
+      actions = [action.juju_enable_ha.ctrl_ha]
+    }
+  }
+}
+
+action "juju_enable_ha" "ctrl_ha" {
+  config {
+  	api_addresses = juju_controller.controller.api_addresses
+  	ca_cert       = juju_controller.controller.ca_cert
+  	username      = juju_controller.controller.username
+  	password      = juju_controller.controller.password
+  	units         = 1
   }
 }
 `
